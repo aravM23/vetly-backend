@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -67,15 +68,27 @@ async def _scheduled_recompute_timing():
         await recompute_niche_hourly_stats(db)
 
 
+async def _background_seed_timing():
+    """Fire-and-forget timing seed so the app starts accepting traffic
+    immediately — important for Railway/Render healthchecks that bail
+    after ~60–120s if /health isn't responding."""
+    try:
+        await _seed_and_recompute_timing()
+        logger.info("Timing data seeded & stats computed (background)")
+    except Exception:
+        logger.exception("Background timing seed failed")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Critical, must-finish-before-traffic work only.
     await init_db()
     logger.info("Database initialized")
 
     await _ensure_default_user()
 
-    await _seed_and_recompute_timing()
-    logger.info("Timing data seeded & stats computed")
+    # Heavy seed runs in the background so /health responds instantly.
+    asyncio.create_task(_background_seed_timing())
 
     scheduler.add_job(
         run_velocity_scan,
