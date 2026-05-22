@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.database import init_db, async_session
@@ -13,6 +14,7 @@ from app.api.alerts import router as alerts_router
 from app.api.timing import router as timing_router
 from app.api.discover import router as discover_router
 from app.services.scanner import run_velocity_scan
+from app.models.models import User
 # Ensure all model modules are registered on Base.metadata before init_db runs.
 from app.models import timing_models  # noqa: F401
 from app.models import discovery_models  # noqa: F401
@@ -30,6 +32,30 @@ logger = logging.getLogger(__name__)
 scheduler = AsyncIOScheduler()
 
 
+async def _ensure_default_user():
+    """
+    Render's free tier uses an ephemeral filesystem — the SQLite DB is wiped
+    on every restart/redeploy. The frontend hard-codes user_id=1 (DISCOVER_USER_ID
+    in discoverApi.ts), so we idempotently re-seed that user on boot. Without
+    this, the first /discover/run after every restart fails with "User not found".
+    """
+    async with async_session() as db:
+        res = await db.execute(select(User).where(User.id == 1))
+        if res.scalar_one_or_none():
+            return
+        db.add(
+            User(
+                id=1,
+                username="stanley",
+                instagram_handle="clubstanley",
+                niche_tags=["social-media-coach"],
+                notification_enabled=True,
+            )
+        )
+        await db.commit()
+        logger.info("Seeded default user id=1 (stanley)")
+
+
 async def _seed_and_recompute_timing():
     async with async_session() as db:
         await seed_demo_timing_data(db)
@@ -45,6 +71,8 @@ async def _scheduled_recompute_timing():
 async def lifespan(app: FastAPI):
     await init_db()
     logger.info("Database initialized")
+
+    await _ensure_default_user()
 
     await _seed_and_recompute_timing()
     logger.info("Timing data seeded & stats computed")
