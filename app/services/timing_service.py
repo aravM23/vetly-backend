@@ -62,7 +62,7 @@ NICHE_CATALOGUE = [
             "closet.theory", "seamed.style", "minimal.edit",
             "fits.byzo", "quietluxe",
         ],
-    },
+    }, 
     {
         "slug": "tech",
         "label": "Tech / Startup",
