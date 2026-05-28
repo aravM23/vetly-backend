@@ -4,15 +4,9 @@ from pathlib import Path
 
 class Settings(BaseSettings):
     database_url: str = "sqlite+aiosqlite:///./velocity_alerts.db"
-
-    # LLM credentials. Either provider works; OpenRouter takes precedence
-    # because it speaks the OpenAI-compatible API with one key giving access to
-    # every model. `llm_model` is fully qualified (e.g. "openai/gpt-4o-mini",
-    # "anthropic/claude-3.5-sonnet") when using OpenRouter.
     openai_api_key: str = ""
     openrouter_api_key: str = ""
-    llm_model: str = ""  # if blank we pick a sane default based on the active provider
-
+    llm_model: str = ""
     instagram_session_id: str = ""
     firebase_credentials_path: str = ""
 
