@@ -16,6 +16,7 @@ import asyncio
 import json
 import logging
 import random
+import re
 from dataclasses import dataclass
 from typing import Iterable
 
@@ -26,6 +27,33 @@ from app.models.discovery_models import CandidateSource as SourceEnum
 from app.services.discovery.llm import get_llm_client
 
 logger = logging.getLogger(__name__)
+
+
+_JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
+_FIRST_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
+
+
+def _parse_json_loose(raw: str) -> dict:
+    """Parse JSON tolerantly. Anthropic/Claude on OpenRouter sometimes wraps
+    output in ```json fences``` or includes a brief preamble even when
+    response_format=json_object is requested. Strip + extract before parsing.
+    """
+    if not raw:
+        return {}
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        pass
+    m = _JSON_FENCE_RE.search(raw)
+    if m:
+        try:
+            return json.loads(m.group(1))
+        except json.JSONDecodeError:
+            pass
+    m = _FIRST_OBJECT_RE.search(raw)
+    if m:
+        return json.loads(m.group(0))
+    raise json.JSONDecodeError("no JSON object found in response", raw, 0)
 
 
 # ─── Data plumbing ──────────────────────────────────────────────────────────
@@ -304,9 +332,18 @@ class LLMBrainstormSource(CandidateSourceBase):
                 temperature=0.3,
                 max_tokens=4000,
             )
-            payload = json.loads(resp.choices[0].message.content or "{}")
+            raw = resp.choices[0].message.content or "{}"
+            payload = _parse_json_loose(raw)
         except Exception as e:
-            logger.warning("LLM brainstorm failed, falling back: %s", e)
+            # Log the raw response so we can actually diagnose Anthropic /
+            # OpenRouter format issues from Railway logs.
+            raw_preview = locals().get("raw", "<no response>")
+            if isinstance(raw_preview, str) and raw_preview:
+                raw_preview = raw_preview[:600].replace("\n", " ")
+            logger.warning(
+                "LLM brainstorm failed (model=%s) err=%s raw=%r",
+                model, e, raw_preview,
+            )
             return self._fallback(limit)
 
         # Newer prompt format returns {"creators": [{handle, display_name, ...}]}.

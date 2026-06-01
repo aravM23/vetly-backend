@@ -238,7 +238,12 @@ async def _score_batch(
         temperature=0.3,
         max_tokens=3000,
     )
-    parsed = json.loads(resp.choices[0].message.content or "{}")
+    raw = resp.choices[0].message.content or "{}"
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        from app.services.discovery.sources import _parse_json_loose
+        parsed = _parse_json_loose(raw)
     return parsed.get("scores", {})
 
 
