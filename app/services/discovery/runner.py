@@ -84,33 +84,104 @@ PREFERRED_GEO_TAGS = ["NORAM", "UK", "EMEA"]
 DEPRIORITIZED_GEO_TAGS = ["PHILIPPINES"]
 
 
+# ─── Stanley Ambassador defaults ────────────────────────────────────────────
+#
+# Different ICP from Club Stanley. Targets channel operators (teaching
+# Creators) whose audience already wants a content thought-partner. Bigger
+# follower window (5k-100k), allow >100k only when teaching + trust hold.
+
+AMBASSADOR_ICP_DESCRIPTION = (
+    "Stanley Ambassadors are CHANNEL OPERATORS — Creators whose audience "
+    "is itself trying to post better content. Target: content-strategy "
+    "teachers, personal-brand coaches, IG growth/Reels/hooks teachers, "
+    "creator-economy operators teaching workflow/AI use, solopreneurs who "
+    "help OTHER Creators post consistently. Strong audience signal: "
+    "comments like 'stealing this', 'what's your process?', 'I tried this'. "
+    "Sweet spot 5k-100k followers; 10k-50k ideal. Cadence 2-3x+/week. "
+    "Bonus: owned distribution beyond IG (newsletter, community, coaching, "
+    "course). De-prioritize: general AI commentary, lifestyle creators who "
+    "occasionally talk content, motivation-first feeds, audiences that "
+    "want inspiration > systems. The non-negotiable test: if Stanley "
+    "disappeared tomorrow, would this Creator's audience still be searching "
+    "for a tool like Stanley?"
+)
+
+AMBASSADOR_DEFAULT_HASHTAGS = [
+    "contentstrategist",
+    "personalbrandcoach",
+    "creatorcoach",
+    "instagramcoach",
+    "reelscoach",
+    "contentmentor",
+    "helpingcreators",
+    "buildyourpersonalbrand",
+    "growonintagram",
+    "contentframeworks",
+    "ideationsystems",
+    "creatorworkflow",
+]
+
+AMBASSADOR_DEFAULT_BRAND_ACCOUNTS = [
+    "stansolo",
+    "beehiiv",
+    "substackinc",
+    "circle",
+    "skool",
+    "kajabi",
+    "convertkit",
+    "notion",
+]
+
+
 # ─── Settings bootstrap ─────────────────────────────────────────────────────
 
 
 async def get_or_create_settings(
-    db: AsyncSession, user_id: int
+    db: AsyncSession, user_id: int, *, program: str = "club_stanley"
 ) -> DiscoverySettings:
     res = await db.execute(
         select(DiscoverySettings).where(DiscoverySettings.user_id == user_id)
     )
     s = res.scalar_one_or_none()
     if s:
-        # Make sure existing rows have sensible seeds.
-        if not s.hashtag_seeds:
-            s.hashtag_seeds = CLUB_STANLEY_DEFAULT_HASHTAGS
-        if not s.brand_account_seeds:
-            s.brand_account_seeds = CLUB_STANLEY_DEFAULT_BRAND_ACCOUNTS
+        # Make sure existing rows have sensible seeds for their program.
+        if s.program == "ambassador":
+            if not s.hashtag_seeds:
+                s.hashtag_seeds = AMBASSADOR_DEFAULT_HASHTAGS
+            if not s.brand_account_seeds:
+                s.brand_account_seeds = AMBASSADOR_DEFAULT_BRAND_ACCOUNTS
+        else:
+            if not s.hashtag_seeds:
+                s.hashtag_seeds = CLUB_STANLEY_DEFAULT_HASHTAGS
+            if not s.brand_account_seeds:
+                s.brand_account_seeds = CLUB_STANLEY_DEFAULT_BRAND_ACCOUNTS
         await db.commit()
         return s
 
-    s = DiscoverySettings(
-        user_id=user_id,
-        hashtag_seeds=CLUB_STANLEY_DEFAULT_HASHTAGS,
-        brand_account_seeds=CLUB_STANLEY_DEFAULT_BRAND_ACCOUNTS,
-        competitor_handle_seeds=[],
-        preferred_geo_tags=PREFERRED_GEO_TAGS,
-        deprioritized_geo_tags=DEPRIORITIZED_GEO_TAGS,
-    )
+    if program == "ambassador":
+        s = DiscoverySettings(
+            user_id=user_id,
+            program="ambassador",
+            icp_description=AMBASSADOR_ICP_DESCRIPTION,
+            hashtag_seeds=AMBASSADOR_DEFAULT_HASHTAGS,
+            brand_account_seeds=AMBASSADOR_DEFAULT_BRAND_ACCOUNTS,
+            competitor_handle_seeds=[],
+            preferred_geo_tags=PREFERRED_GEO_TAGS,
+            deprioritized_geo_tags=DEPRIORITIZED_GEO_TAGS,
+            follower_min=5_000,
+            follower_max=100_000,
+            min_engagement_rate=0.015,
+        )
+    else:
+        s = DiscoverySettings(
+            user_id=user_id,
+            program="club_stanley",
+            hashtag_seeds=CLUB_STANLEY_DEFAULT_HASHTAGS,
+            brand_account_seeds=CLUB_STANLEY_DEFAULT_BRAND_ACCOUNTS,
+            competitor_handle_seeds=[],
+            preferred_geo_tags=PREFERRED_GEO_TAGS,
+            deprioritized_geo_tags=DEPRIORITIZED_GEO_TAGS,
+        )
     db.add(s)
     await db.commit()
     await db.refresh(s)
@@ -134,6 +205,7 @@ async def run_discovery(
 
     settings_row = await get_or_create_settings(db, user_id)
     limit = per_source_limit or settings_row.candidates_per_source
+    program = settings_row.program or "club_stanley"
 
     sources = build_default_sources(
         icp_description=settings_row.icp_description,
@@ -141,6 +213,7 @@ async def run_discovery(
         brand_account_seeds=settings_row.brand_account_seeds,
         competitor_handle_seeds=settings_row.competitor_handle_seeds,
         use_scrapers=use_scrapers,
+        program=program,
     )
 
     run = DiscoveryRun(
@@ -176,6 +249,7 @@ async def run_discovery(
         scored = await score_candidates(
             [_to_score_input(h, settings_row) for h in filtered],
             icp_description=settings_row.icp_description,
+            program=program,
         )
         score_lookup = {s.handle: s for s in scored}
         run.scored_count = len(scored)

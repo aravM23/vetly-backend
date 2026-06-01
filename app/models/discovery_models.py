@@ -72,6 +72,12 @@ class DiscoverySettings(Base):
         ForeignKey("users.id"), unique=True, index=True
     )
 
+    # Which sourcing program this row belongs to. Drives prompt selection +
+    # default seeds in the backend, and tab labels + copy in the frontend.
+    #   "club_stanley" → emerging social-media coaches incubator
+    #   "ambassador"   → Stanley Ambassador (channel-operator) program
+    program: Mapped[str] = mapped_column(String(32), default="club_stanley", index=True)
+
     # ICP — free-form description fed to the LLM scorer.
     # Mirrors the Club Stanley sourcing guide: emerging social-media coaches,
     # 10k-100k followers, NORAM / EMEA preferred, talking-head content, 3x+/week

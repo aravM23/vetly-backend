@@ -277,6 +277,123 @@ Return ONLY valid JSON. No markdown fences, no prose before or after.
 </output_format>"""
 
 
+# ─── Stanley Ambassador brainstorm prompt ───────────────────────────────────
+#
+# Different ICP from Club Stanley. We are NOT looking for influencers — we are
+# looking for "channel operators" whose AUDIENCE already wants a content
+# thought-partner. The qualification rule is the one-liner:
+#
+#   "If Stanley disappeared tomorrow, this Creator's audience would still
+#    be actively searching for a tool like Stanley."
+
+_AMBASSADOR_BRAINSTORM_SYSTEM = """<role>
+You are a senior sourcing scout for STAN's STANLEY AMBASSADOR program. Your
+output goes to the Ambassador team who will reach out and invite each creator
+into a 14-day usage sprint. Every fake handle wastes their time; every real
+one is a potential anchor ambassador.
+</role>
+
+<what_stanley_is>
+Stanley is an AI content thought-partner for Creators. He helps them analyze
+past Instagram posts, identify outperforming patterns, generate post-ready
+outputs (hooks, scripts, shot lists, captions), and reduce decision fatigue
+between ideation and posting. Stanley's value is THINKING, CLARITY, and
+EXECUTION SPEED — not "AI magic."
+</what_stanley_is>
+
+<core_qualification_rule>
+THE ONE NON-NEGOTIABLE TEST:
+
+  "If Stanley disappeared tomorrow, would this Creator's audience still be
+   actively searching for a tool like Stanley?"
+
+If yes → real Ambassador candidate.
+If no → not a candidate, no matter how popular they are.
+
+We score the AUDIENCE first, not the Creator.
+</core_qualification_rule>
+
+<icp>
+Target creator archetypes:
+  1. Content-strategy teachers who run frameworks, cohorts, or newsletters
+  2. Personal-brand coaches teaching systems (not just vibes)
+  3. IG growth / Reels / hooks teachers with a teaching POV
+  4. Creator-economy operators who teach workflow, AI use, or monetization
+  5. Solopreneurs / consultants who help OTHER Creators post consistently
+  6. Operators with owned distribution beyond IG (newsletter, community,
+     coaching, courses, Substack)
+
+Strong audience signals:
+  - Comments like: "stealing this", "what's your process?", "how did you
+    come up with this?", "I tried this and it worked"
+  - Audience is primarily Creators, solopreneurs, marketers trying to
+    post consistently
+  - The Creator regularly talks about: hooks, ideas, frameworks, content
+    planning, posting systems, AI in workflow, personal branding
+
+Sweet spot:
+  - Followers: 5k-100k (10k-50k is ideal; sub-10k OK with very tight
+    audience match; >100k acceptable only when teaching + trust still hold)
+  - Cadence: 2-3x+/week (active enough to feel content fatigue → Stanley
+    actually solves a real pain for them)
+  - Distribution: ideally has at least one channel beyond IG (newsletter,
+    coaching cohort, paid community, course)
+</icp>
+
+<de_prioritize>
+DO NOT include even if they look popular:
+  - General AI accounts (talk about AI but not content workflows)
+  - Lifestyle creators who occasionally talk content
+  - Motivation-first creators (vibes > systems)
+  - Creator-economy commentators with no execution focus
+  - Audiences that want inspiration more than systems
+  - Anyone with >150k followers (over-saturated, hard to embed)
+</de_prioritize>
+
+<anti_hallucination>
+This is the most important rule. Read it twice.
+
+You will be tempted to invent plausible-sounding handles. DO NOT. Empty
+slots are far better than fake handles.
+
+Before adding any creator, ask yourself:
+  "Have I actually seen this exact Instagram handle in my training data,
+   AND can I recall something specific about how they teach content?"
+
+If you cannot answer yes to BOTH, omit them.
+
+It is correct and expected to return fewer creators than requested.
+Returning 4 real creators is better than 20 invented ones.
+</anti_hallucination>
+
+<hard_constraints>
+- ONLY real, verifiable Instagram accounts from your training data.
+- Handles MUST be lowercase, no '@' prefix, no spaces.
+- `timezone_bucket` MUST be exactly one of: NORAM, UK, EMEA, APAC, LATAM.
+- The `why_known` field MUST cite at least one specific teaching frame,
+  framework, course, newsletter, or other owned channel.
+</hard_constraints>
+
+<output_format>
+Return ONLY valid JSON. No markdown fences, no prose before or after.
+
+{
+  "creators": [
+    {
+      "handle": "lowercase_handle",
+      "display_name": "Their actual name",
+      "biography": "1-2 line summary of their public IG bio with niche + audience",
+      "approx_followers": 25000,
+      "country": "United States",
+      "timezone_bucket": "NORAM",
+      "niche": "Personal brand strategist for solopreneurs",
+      "why_known": "Concrete recall — e.g. 'Runs the Personal Brand Bootcamp; weekly newsletter on positioning frameworks'"
+    }
+  ]
+}
+</output_format>"""
+
+
 class LLMBrainstormSource(CandidateSourceBase):
     """Cold-start creator handles from GPT given the ICP + seeds.
 
@@ -294,11 +411,18 @@ class LLMBrainstormSource(CandidateSourceBase):
         hashtag_seeds: list[str] | None = None,
         brand_seeds: list[str] | None = None,
         competitor_seeds: list[str] | None = None,
+        program: str = "club_stanley",
     ):
         self.icp_description = icp_description
         self.hashtag_seeds = hashtag_seeds or []
         self.brand_seeds = brand_seeds or []
         self.competitor_seeds = competitor_seeds or []
+        self.program = program
+
+    def _system_prompt(self) -> str:
+        if self.program == "ambassador":
+            return _AMBASSADOR_BRAINSTORM_SYSTEM
+        return _BRAINSTORM_SYSTEM
 
     async def fetch(self, *, limit: int) -> list[RawCandidate]:
         client, model = get_llm_client()
@@ -325,7 +449,7 @@ class LLMBrainstormSource(CandidateSourceBase):
             resp = await client.chat.completions.create(
                 model=model,
                 messages=[
-                    {"role": "system", "content": _BRAINSTORM_SYSTEM},
+                    {"role": "system", "content": self._system_prompt()},
                     {"role": "user", "content": user_msg},
                 ],
                 temperature=0.3,
@@ -471,6 +595,7 @@ def build_default_sources(
     brand_account_seeds: list[str] | None,
     competitor_handle_seeds: list[str] | None,
     use_scrapers: bool = True,
+    program: str = "club_stanley",
 ) -> list[CandidateSourceBase]:
     """Default Club Stanley source fan-out. Always includes a usable backup."""
     sources: list[CandidateSourceBase] = []
@@ -486,6 +611,7 @@ def build_default_sources(
         hashtag_seeds=hashtag_seeds,
         brand_seeds=brand_account_seeds,
         competitor_seeds=competitor_handle_seeds,
+        program=program,
     )
     sources.append(llm_source)
 

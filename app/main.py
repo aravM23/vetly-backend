@@ -39,22 +39,47 @@ async def _ensure_default_user():
     on every restart/redeploy. The frontend hard-codes user_id=1 (DISCOVER_USER_ID
     in discoverApi.ts), so we idempotently re-seed that user on boot. Without
     this, the first /discover/run after every restart fails with "User not found".
+
+    We also seed user_id=2 for the Stanley Ambassador program — the frontend
+    points its "Ambassadors" tab at user 2 and reads program-specific defaults
+    (ICP, hashtag seeds, follower range) off DiscoverySettings.
     """
     async with async_session() as db:
+        # User 1 → Club Stanley
         res = await db.execute(select(User).where(User.id == 1))
-        if res.scalar_one_or_none():
-            return
-        db.add(
-            User(
-                id=1,
-                username="stanley",
-                instagram_handle="clubstanley",
-                niche_tags=["social-media-coach"],
-                notification_enabled=True,
+        if not res.scalar_one_or_none():
+            db.add(
+                User(
+                    id=1,
+                    username="stanley",
+                    instagram_handle="clubstanley",
+                    niche_tags=["social-media-coach"],
+                    notification_enabled=True,
+                )
             )
-        )
-        await db.commit()
-        logger.info("Seeded default user id=1 (stanley)")
+            await db.commit()
+            logger.info("Seeded default user id=1 (Club Stanley)")
+
+        # User 2 → Stanley Ambassadors
+        res = await db.execute(select(User).where(User.id == 2))
+        if not res.scalar_one_or_none():
+            db.add(
+                User(
+                    id=2,
+                    username="stanley_ambassadors",
+                    instagram_handle="stanleyambassadors",
+                    niche_tags=["channel-operator", "content-teacher"],
+                    notification_enabled=True,
+                )
+            )
+            await db.commit()
+            logger.info("Seeded default user id=2 (Stanley Ambassadors)")
+
+        # Make sure each user has a DiscoverySettings row with the right
+        # program tag so the first /discover/run doesn't have to do it.
+        from app.services.discovery.runner import get_or_create_settings
+        await get_or_create_settings(db, user_id=1, program="club_stanley")
+        await get_or_create_settings(db, user_id=2, program="ambassador")
 
 
 async def _seed_and_recompute_timing():
