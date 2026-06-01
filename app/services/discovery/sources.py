@@ -328,15 +328,12 @@ class LLMBrainstormSource(CandidateSourceBase):
                     {"role": "system", "content": _BRAINSTORM_SYSTEM},
                     {"role": "user", "content": user_msg},
                 ],
-                response_format={"type": "json_object"},
                 temperature=0.3,
-                max_tokens=4000,
+                max_tokens=8000,
             )
             raw = resp.choices[0].message.content or "{}"
             payload = _parse_json_loose(raw)
         except Exception as e:
-            # Log the raw response so we can actually diagnose Anthropic /
-            # OpenRouter format issues from Railway logs.
             raw_preview = locals().get("raw", "<no response>")
             if isinstance(raw_preview, str) and raw_preview:
                 raw_preview = raw_preview[:600].replace("\n", " ")
@@ -344,7 +341,13 @@ class LLMBrainstormSource(CandidateSourceBase):
                 "LLM brainstorm failed (model=%s) err=%s raw=%r",
                 model, e, raw_preview,
             )
-            return self._fallback(limit)
+            # Surface the failure to the run row so the API/UI can show
+            # the real reason instead of pretending the run succeeded
+            # with hardcoded fake handles.
+            raise RuntimeError(
+                f"LLM brainstorm failed: {type(e).__name__}: {e}. "
+                f"raw={raw_preview!r}"
+            ) from e
 
         # Newer prompt format returns {"creators": [{handle, display_name, ...}]}.
         # Tolerate the legacy {"handles": [...]} shape too.
