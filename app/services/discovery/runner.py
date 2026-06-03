@@ -39,6 +39,8 @@ from app.services.discovery.sources import (
     build_default_sources,
     collect_candidates,
 )
+from app.services.discovery.curated import for_program as curated_for_program
+from app.models.discovery_models import CandidateSource as SourceEnum
 from app.services.instagram import ingest_creator_posts
 from app.services.instagram_verify import IgProfile, verify_many
 
@@ -299,6 +301,45 @@ async def run_discovery(
         # 4. Apply follower/engagement filters before scoring.
         filtered = _apply_filters(hydrated, settings_row)
         logger.info("discovery: %d survive filters", len(filtered))
+
+        # 4b. Curated fallback. If zero candidates passed the filter (likely
+        # because IG rate-limited Railway and we couldn't verify anyone, OR
+        # the LLM brainstorm produced nothing in-niche), inject a sample
+        # from the curated team-maintained list. These still go through
+        # verification + scoring, so wrong handles get dropped gracefully.
+        if not filtered:
+            logger.info(
+                "discovery: 0 survived filters — injecting curated seeds "
+                "for program=%s",
+                program,
+            )
+            seeds = curated_for_program(program, limit=8)
+            if seeds:
+                seed_raws = [
+                    RawCandidate(
+                        handle=s["handle"],
+                        source=SourceEnum.LLM_BRAINSTORM,
+                        seed="curated_fallback",
+                        enrichment={
+                            "display_name": s.get("display_name"),
+                            "biography": None,
+                            "approx_followers": s.get("approx_followers"),
+                            "country": s.get("country"),
+                            "timezone_bucket": s.get("timezone_bucket"),
+                            "niche": s.get("niche"),
+                            "why_known": s.get("why_known"),
+                        },
+                    )
+                    for s in seeds
+                ]
+                seed_dedup = await _dedupe_against_history(db, user_id, seed_raws)
+                seed_hydrated = await _hydrate(seed_dedup)
+                seed_filtered = _apply_filters(seed_hydrated, settings_row)
+                logger.info(
+                    "discovery: curated fallback yielded %d/%d seeds",
+                    len(seed_filtered), len(seeds),
+                )
+                filtered = seed_filtered
 
         # 5. Score.
         scored = await score_candidates(
