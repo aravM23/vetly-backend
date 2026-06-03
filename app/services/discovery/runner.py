@@ -195,6 +195,10 @@ async def get_or_create_settings(
                 s.follower_min = 50_000
             if (s.follower_max or 0) < 500_000:
                 s.follower_max = 500_000
+        # Hard floor: NO sub-floor outliers, even with strong engagement.
+        # The user explicitly asked for "minimum 50k followers please" with
+        # no exceptions. Honor that as an absolute filter.
+        s.allow_sub_floor_outliers = False
         await db.commit()
         return s
 
@@ -211,6 +215,7 @@ async def get_or_create_settings(
             follower_min=50_000,
             follower_max=100_000,
             min_engagement_rate=0.015,
+            allow_sub_floor_outliers=False,
         )
     else:
         s = DiscoverySettings(
@@ -224,6 +229,7 @@ async def get_or_create_settings(
             deprioritized_geo_tags=DEPRIORITIZED_GEO_TAGS,
             follower_min=50_000,
             follower_max=500_000,
+            allow_sub_floor_outliers=False,
         )
     db.add(s)
     await db.commit()
@@ -592,23 +598,27 @@ def _build_hydrated(c: RawCandidate, profile: dict, posts: list[dict]) -> dict:
 
 def _apply_filters(hydrated: list[dict], settings_row: DiscoverySettings) -> list[dict]:
     """
-    Apply Club Stanley sourcing filters.
+    Apply program follower / quality filters.
 
-    Follower sweet spot is 10k-100k, BUT per the guide ("Outlier Examples":
-    Mehr Rajput) a Creator below 10k with an unusually tapped-in audience is
-    still worth surfacing for review. We honor that here:
+    The follower floor is an ABSOLUTE lower bound — Creators below the floor
+    are dropped no matter what (no outlier exception, no engagement override).
+    The user's product call is "minimum 50k followers please" with no
+    exceptions. We honor that here.
 
-      - Sub-floor + strong engagement → keep, set is_outlier_flagged=True
-      - Sub-floor + weak engagement   → drop
-      - Above the ceiling             → drop (too established for an emerging-Creator program)
-      - Engagement under the floor    → keep but tag for the scorer
+    Layered drops (each logged separately so a Run-Discovery failure has a
+    legible breakdown):
+
+      - Private accounts                     → drop (can't evaluate)
+      - <500 followers (dead account)        → drop
+      - Above ceiling (over-tier / >100K     → drop
+        for Ambassadors per the qualification doc)
+      - Below floor                          → drop (no exceptions)
+      - Engagement under floor               → keep but tag for the scorer
     """
     out = []
     floor = settings_row.follower_min
     ceiling = settings_row.follower_max
     eng_floor = settings_row.min_engagement_rate
-    allow_outliers = settings_row.allow_sub_floor_outliers
-    OUTLIER_ENGAGEMENT_FLOOR = 0.05  # 5% — clearly above the noise
 
     dropped_private = 0
     dropped_zero = 0
@@ -619,30 +629,21 @@ def _apply_filters(hydrated: list[dict], settings_row: DiscoverySettings) -> lis
         followers = h.get("follower_count") or 0
         eng = h.get("engagement_rate") or 0
 
-        # Hard drops first — these are never partnership-ready.
         if h.get("is_private"):
             dropped_private += 1
             continue
-        # An account with <500 followers is either a brand-new spinoff,
-        # a hallucinated near-miss handle, or a dead account. None of those
-        # belong on the dashboard.
         if followers < 500:
             dropped_zero += 1
             continue
-
         if ceiling and followers > ceiling:
             dropped_ceiling += 1
             continue
-
         if followers < floor:
-            if allow_outliers and eng >= OUTLIER_ENGAGEMENT_FLOOR:
-                h["is_outlier_flagged"] = True
-            else:
-                dropped_floor += 1
-                continue
-        else:
-            h["is_outlier_flagged"] = False
+            # Hard floor. No outlier path. The 50k bar is non-negotiable.
+            dropped_floor += 1
+            continue
 
+        h["is_outlier_flagged"] = False
         if eng < eng_floor:
             h["engagement_below_floor"] = True
 
@@ -650,8 +651,9 @@ def _apply_filters(hydrated: list[dict], settings_row: DiscoverySettings) -> lis
 
     if dropped_private or dropped_zero or dropped_ceiling or dropped_floor:
         logger.info(
-            "filters: dropped private=%d dead=%d above_ceiling=%d below_floor=%d (kept %d)",
-            dropped_private, dropped_zero, dropped_ceiling, dropped_floor, len(out),
+            "filters: dropped private=%d dead=%d above_ceiling=%d below_floor=%d (kept %d, floor=%d, ceiling=%s)",
+            dropped_private, dropped_zero, dropped_ceiling, dropped_floor,
+            len(out), floor, ceiling,
         )
     return out
 
