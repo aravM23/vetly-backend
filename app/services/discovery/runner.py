@@ -39,31 +39,54 @@ from app.services.discovery.sources import (
     build_default_sources,
     collect_candidates,
 )
-from app.services.instagram import get_scraper, ingest_creator_posts
+from app.services.instagram import ingest_creator_posts
+from app.services.instagram_verify import IgProfile, verify_many
 
 logger = logging.getLogger(__name__)
 
 
 # ─── Club Stanley defaults ──────────────────────────────────────────────────
 #
-# Per the sourcing guide, the program targets EMERGING social-media coaches
-# (people who teach IG growth, content strategy, UGC, monetization, etc.) —
-# NOT the Stanley-the-drinkware audience. Seeds below are the hashtag + brand
-# ecosystem those Creators actually live in.
+# Club Stanley is Stan's Creator INCUBATOR program — an 8-12 week structured
+# cohort where ~50-60 EMERGING Creators get a flat $300/post to produce
+# authentic Stanley-led content. The North Star is content volume (120+
+# posts in Cohort 2), not direct conversion. The flywheel feeds Social,
+# Paid, PR, Partnerships, Product, Community, and Referrals downstream.
+#
+# So sourcing targets are:
+#   - Emerging-tier Creators (50K-500K, NORAM/EMEA preferred)
+#   - Authentic, builds-in-public, has taste, comfortable on camera
+#   - Operates in or adjacent to the Creator-economy / content-strategy
+#     niche so Stanley fits naturally into their workflow on-screen
+#   - Cohort 1 archetype: Elly Walton (~124K, breakout case study)
+
+CLUB_STANLEY_ICP_DESCRIPTION = (
+    "Club Stanley is Stan's Creator incubator. We're sourcing EMERGING-tier "
+    "Creators (50K-500K followers, NORAM/EMEA strongly preferred) who can "
+    "produce authentic, well-crafted Instagram content that showcases their "
+    "real workflow with Stanley (an AI content thought-partner). Target "
+    "archetypes: content-strategy / personal-brand / Creator-economy "
+    "Creators with a clear POV, strong taste, comfort on camera, "
+    "consistent 2-3x+/week cadence, and audiences that engage with "
+    "process-style content (not just outcome posts). Cohort 1 anchor: "
+    "Elly Walton (44k → 124k followers, 18.4M views on a single Reel). "
+    "We pay $300/post + bonuses + performance multipliers — Creators "
+    "should be excited to produce 2-3 posts during the 12-week cohort."
+)
 
 CLUB_STANLEY_DEFAULT_HASHTAGS = [
-    "socialmediacoach",
-    "instagramgrowth",
     "contentstrategy",
-    "ugccreator",
-    "ugccoach",
+    "personalbrandcoach",
     "creatoreconomy",
-    "creatorcoach",
+    "instagramgrowth",
     "reelsstrategy",
     "shortformcontent",
-    "contentcreatortips",
+    "creatortips",
+    "buildinpublic",
+    "ugccreator",
     "monetizeyourcontent",
-    "personalbrandcoach",
+    "contentframeworks",
+    "creatorworkflow",
 ]
 
 # Brand / product accounts whose tagged posts surface emerging social-media
@@ -91,19 +114,23 @@ DEPRIORITIZED_GEO_TAGS = ["PHILIPPINES"]
 # follower window (5k-100k), allow >100k only when teaching + trust hold.
 
 AMBASSADOR_ICP_DESCRIPTION = (
-    "Stanley Ambassadors are CHANNEL OPERATORS — Creators whose audience "
-    "is itself trying to post better content. Target: content-strategy "
-    "teachers, personal-brand coaches, IG growth/Reels/hooks teachers, "
-    "creator-economy operators teaching workflow/AI use, solopreneurs who "
-    "help OTHER Creators post consistently. Strong audience signal: "
-    "comments like 'stealing this', 'what's your process?', 'I tried this'. "
-    "Sweet spot 5k-100k followers; 10k-50k ideal. Cadence 2-3x+/week. "
-    "Bonus: owned distribution beyond IG (newsletter, community, coaching, "
-    "course). De-prioritize: general AI commentary, lifestyle creators who "
-    "occasionally talk content, motivation-first feeds, audiences that "
-    "want inspiration > systems. The non-negotiable test: if Stanley "
-    "disappeared tomorrow, would this Creator's audience still be searching "
-    "for a tool like Stanley?"
+    "Stanley Ambassadors are CHANNEL OPERATORS — non-influencer Creators "
+    "whose audience already actively wants what Stanley provides (a content "
+    "thought-partner). The non-negotiable test: 'If Stanley disappeared "
+    "tomorrow, would this Creator's audience still be searching for a tool "
+    "like Stanley?' If yes → Ambassador. If no → not, no matter how popular. "
+    "Sweet spot 50K-100K followers (max-leverage, still non-paid territory). "
+    "Anyone over 100K on any platform is DISQUALIFIED. "
+    "Audience signal beats Creator persona: comments must include 'stealing "
+    "this', 'what's your process?', 'how did you come up with this?', "
+    "'I tried this and it worked'. Creator regularly teaches frameworks, "
+    "ideation systems, scripting, hooks, posting workflows. Bonus points "
+    "for owned distribution beyond IG (newsletter, community, course, "
+    "coaching cohort, Substack) — those are how Stanley embeds. "
+    "DE-PRIORITIZE: general AI accounts, lifestyle Creators who "
+    "occasionally talk content, motivation-first feeds, Creator-economy "
+    "commentators with no execution focus, audiences that want "
+    "inspiration > systems."
 )
 
 AMBASSADOR_DEFAULT_HASHTAGS = [
@@ -150,11 +177,24 @@ async def get_or_create_settings(
                 s.hashtag_seeds = AMBASSADOR_DEFAULT_HASHTAGS
             if not s.brand_account_seeds:
                 s.brand_account_seeds = AMBASSADOR_DEFAULT_BRAND_ACCOUNTS
+            # Ambassadors: hard cap at 100K per the qualification doc
+            # ("Over 100K on any platform → 0 / disqualified"). Floor at 50K
+            # is the user's "minimum 50k" product call.
+            s.follower_min = 50_000
+            s.follower_max = 100_000
         else:
             if not s.hashtag_seeds:
                 s.hashtag_seeds = CLUB_STANLEY_DEFAULT_HASHTAGS
             if not s.brand_account_seeds:
                 s.brand_account_seeds = CLUB_STANLEY_DEFAULT_BRAND_ACCOUNTS
+            # Club Stanley targets the EMERGING tier — bigger window than
+            # Ambassadors. 50K floor (user's "minimum 50k"), 500K ceiling
+            # (Cohort 1 breakout Elly Walton ended at ~124K, leaving room
+            # for established-but-not-mega Creators).
+            if (s.follower_min or 0) < 50_000:
+                s.follower_min = 50_000
+            if (s.follower_max or 0) < 500_000:
+                s.follower_max = 500_000
         await db.commit()
         return s
 
@@ -168,7 +208,7 @@ async def get_or_create_settings(
             competitor_handle_seeds=[],
             preferred_geo_tags=PREFERRED_GEO_TAGS,
             deprioritized_geo_tags=DEPRIORITIZED_GEO_TAGS,
-            follower_min=5_000,
+            follower_min=50_000,
             follower_max=100_000,
             min_engagement_rate=0.015,
         )
@@ -176,11 +216,14 @@ async def get_or_create_settings(
         s = DiscoverySettings(
             user_id=user_id,
             program="club_stanley",
+            icp_description=CLUB_STANLEY_ICP_DESCRIPTION,
             hashtag_seeds=CLUB_STANLEY_DEFAULT_HASHTAGS,
             brand_account_seeds=CLUB_STANLEY_DEFAULT_BRAND_ACCOUNTS,
             competitor_handle_seeds=[],
             preferred_geo_tags=PREFERRED_GEO_TAGS,
             deprioritized_geo_tags=DEPRIORITIZED_GEO_TAGS,
+            follower_min=50_000,
+            follower_max=500_000,
         )
     db.add(s)
     await db.commit()
@@ -206,6 +249,12 @@ async def run_discovery(
     settings_row = await get_or_create_settings(db, user_id)
     limit = per_source_limit or settings_row.candidates_per_source
     program = settings_row.program or "club_stanley"
+
+    # Wipe any stale PENDING candidates from earlier (pre-verification or
+    # below the current floor). We only touch PENDING — never approved,
+    # rejected, or shortlisted rows. This keeps the dashboard from carrying
+    # forward hallucinations and dead accounts after a settings change.
+    await _scrub_stale_pending(db, user_id, settings_row)
 
     sources = build_default_sources(
         icp_description=settings_row.icp_description,
@@ -275,6 +324,52 @@ async def run_discovery(
 # ─── Pipeline steps ─────────────────────────────────────────────────────────
 
 
+async def _scrub_stale_pending(
+    db: AsyncSession, user_id: int, settings_row: DiscoverySettings
+) -> None:
+    """Drop PENDING candidates that no longer meet our quality bar.
+
+    Two reasons to scrub before a run:
+
+      1. Rows written by older versions of the pipeline have ``data_source``
+         IS NULL — they were never IG-verified, so we can't trust their
+         follower counts. They'd otherwise sit on the dashboard forever.
+      2. Settings changes (e.g. raising ``follower_min`` from 10k → 50k)
+         leave behind candidates that no longer qualify. Better to flush
+         them than ask the reviewer to wade through stale junk.
+
+    APPROVED, REJECTED, SHORTLISTED, or PROMOTED rows are NEVER touched —
+    those represent real human decisions.
+    """
+    floor = settings_row.follower_min or 50_000
+    res = await db.execute(
+        select(CreatorCandidate).where(
+            and_(
+                CreatorCandidate.user_id == user_id,
+                CreatorCandidate.status == CandidateStatus.PENDING,
+                CreatorCandidate.is_shortlisted == False,  # noqa: E712
+            )
+        )
+    )
+    stale: list[CreatorCandidate] = []
+    for row in res.scalars().all():
+        is_unverified = row.data_source is None
+        below_floor = (row.follower_count or 0) < floor
+        if is_unverified or below_floor:
+            stale.append(row)
+
+    if not stale:
+        return
+    for row in stale:
+        await db.delete(row)
+    await db.commit()
+    logger.info(
+        "scrub: deleted %d stale pending candidates for user %d "
+        "(floor=%d, settings_id=%d)",
+        len(stale), user_id, floor, settings_row.id,
+    )
+
+
 async def _dedupe_against_history(
     db: AsyncSession, user_id: int, raw: list[RawCandidate]
 ) -> list[RawCandidate]:
@@ -307,79 +402,111 @@ async def _dedupe_against_history(
 
 
 async def _hydrate(candidates: list[RawCandidate]) -> list[dict]:
-    """Fetch profile + recent posts for each candidate. Capped concurrency.
+    """Verify every candidate against Instagram before trusting any of its data.
 
-    Fast path: when the candidate already carries `enrichment` (LLM brainstorm
-    that returned real metadata in-line), skip the scraper entirely. This is
-    how we get real bios + follower counts without an authenticated Instagram
-    session — Instagram blocks anonymous instaloader, but the LLM has prior
-    knowledge of well-known public coaches.
+    This is the anti-hallucination step. The LLM brainstorm cheerfully invents
+    handles like ``@iamnatashapec`` and assigns them plausible-sounding follower
+    counts. Trusting that data was the entire reason previous runs surfaced
+    creators whose profiles 404 on Instagram.
+
+    Pipeline:
+
+      1. Hit Instagram's public ``web_profile_info`` endpoint for every handle.
+      2. If the handle 404s OR every endpoint blocks us → drop the candidate.
+      3. Use the REAL follower / bio / post-count numbers from Instagram.
+      4. Keep the LLM's ``niche`` / ``why_known`` / geo guesses as soft hints
+         the scorer can chew on, but never as hard metrics.
+
+    Authenticated instaloader path is still wired in case Stanley provides a
+    session in the future, but it's a fallback now — verification is mandatory.
     """
     if not candidates:
         return []
-    scraper = get_scraper()
-    sem = asyncio.Semaphore(5)
 
-    async def _one(c: RawCandidate) -> dict | None:
-        if c.enrichment:
-            return _build_from_enrichment(c)
-        async with sem:
-            try:
-                profile = await scraper.fetch_creator_profile(c.handle)
-                if "error" in profile:
-                    return None
-                posts = await scraper.fetch_recent_posts(c.handle, max_posts=8)
-                return _build_hydrated(c, profile, posts)
-            except Exception as e:
-                logger.info("hydration failed for %s: %s", c.handle, e)
-                return None
+    handles = [c.handle for c in candidates]
+    verified = await verify_many(handles, concurrency=4)
 
-    results = await asyncio.gather(*(_one(c) for c in candidates))
-    return [r for r in results if r]
+    out: list[dict] = []
+    rejected_404: list[str] = []
+    rejected_blocked: list[str] = []
+    for c in candidates:
+        prof = verified.get(c.handle)
+        if prof is None:
+            # Either the handle doesn't exist, or IG rate-limited every retry.
+            # Either way, surfacing it would be a hallucination — drop.
+            if c.enrichment:
+                rejected_blocked.append(c.handle)
+            else:
+                rejected_404.append(c.handle)
+            continue
+        out.append(_build_from_verified(c, prof))
+
+    if rejected_404:
+        logger.info(
+            "hydration: dropped %d unverifiable handles: %s",
+            len(rejected_404),
+            ", ".join(rejected_404[:10]),
+        )
+    if rejected_blocked:
+        logger.info(
+            "hydration: dropped %d LLM-suggested handles that IG could not "
+            "verify (404 or rate-limited): %s",
+            len(rejected_blocked),
+            ", ".join(rejected_blocked[:10]),
+        )
+    return out
 
 
-def _build_from_enrichment(c: RawCandidate) -> dict:
-    """Build the hydrated dict from LLM-supplied metadata.
+def _build_from_verified(c: RawCandidate, prof: IgProfile) -> dict:
+    """Build the hydrated dict from REAL IG data + soft LLM hints.
 
-    We don't have real post metrics here, so derive sensible defaults from the
-    follower-count estimate (so the scorer's engagement-rate path still works)
-    and mark `data_source` so the UI can surface it.
+    Hard metrics (follower count, bio, post count, display name) are pulled
+    from Instagram. The LLM-supplied geo / niche / why-known fields ride
+    along as hints for the scorer.
+
+    We don't have post-level metrics here (that requires either an
+    authenticated instaloader session or hitting the legacy GraphQL endpoint
+    which is fully auth-walled now). We fabricate sensible engagement
+    estimates from typical 2-3% rates so the rubric's engagement-rate path
+    doesn't divide by zero. The scorer treats these conservatively.
     """
     e = c.enrichment or {}
-    followers = int(e.get("approx_followers") or 0)
-    # Conservative defaults: ~3% ER for a well-known coach, ~4 posts/week.
-    avg_likes = followers * 0.025
-    avg_comments = followers * 0.0008
+    followers = prof.follower_count
+    avg_likes = followers * 0.025 if followers else 0
+    avg_comments = followers * 0.0008 if followers else 0
     avg_views = followers * 1.2 if followers else 0
     engagement_rate = (
         ((avg_likes + avg_comments) / followers) if followers else 0.0
     )
+
     return {
         "raw": c,
-        "handle": c.handle,
-        "display_name": e.get("display_name"),
-        "biography": e.get("biography"),
+        "handle": prof.handle,  # canonical lowercase from IG
+        "display_name": prof.display_name,
+        "biography": prof.biography or e.get("biography"),
         "follower_count": followers,
-        "following_count": None,
-        "post_count": None,
+        "following_count": prof.following_count,
+        "post_count": prof.post_count,
         "avg_views": avg_views,
         "avg_likes": avg_likes,
         "avg_comments": avg_comments,
         "engagement_rate": engagement_rate,
         "recent_post_caption_sample": None,
-        "last_post_at": datetime.now(timezone.utc),
-        "posts_per_week": 4.0,
+        "last_post_at": None,
+        "posts_per_week": None,  # unknown without an authed scrape
         "like_to_comment_ratio": (avg_likes / avg_comments) if avg_comments else None,
         "ad_density": 0.0,
         "country_guess": e.get("country"),
         "timezone_bucket": e.get("timezone_bucket"),
         "discovered_via": c.source.value,
         "discovery_seed": c.seed,
-        # The scorer will refine these; we pass the LLM's niche/why_known as a
-        # seed so the rubric prompt has something concrete to chew on.
+        # Soft LLM hints for the scorer.
         "llm_niche_hint": e.get("niche"),
         "llm_why_known": e.get("why_known"),
-        "data_source": "llm_known",
+        # Provenance.
+        "data_source": f"ig_verified:{prof.source}",
+        "is_private": prof.is_private,
+        "is_verified": prof.is_verified,
     }
 
 
@@ -483,17 +610,35 @@ def _apply_filters(hydrated: list[dict], settings_row: DiscoverySettings) -> lis
     allow_outliers = settings_row.allow_sub_floor_outliers
     OUTLIER_ENGAGEMENT_FLOOR = 0.05  # 5% — clearly above the noise
 
+    dropped_private = 0
+    dropped_zero = 0
+    dropped_ceiling = 0
+    dropped_floor = 0
+
     for h in hydrated:
         followers = h.get("follower_count") or 0
         eng = h.get("engagement_rate") or 0
 
+        # Hard drops first — these are never partnership-ready.
+        if h.get("is_private"):
+            dropped_private += 1
+            continue
+        # An account with <500 followers is either a brand-new spinoff,
+        # a hallucinated near-miss handle, or a dead account. None of those
+        # belong on the dashboard.
+        if followers < 500:
+            dropped_zero += 1
+            continue
+
         if ceiling and followers > ceiling:
+            dropped_ceiling += 1
             continue
 
         if followers < floor:
             if allow_outliers and eng >= OUTLIER_ENGAGEMENT_FLOOR:
                 h["is_outlier_flagged"] = True
             else:
+                dropped_floor += 1
                 continue
         else:
             h["is_outlier_flagged"] = False
@@ -502,6 +647,12 @@ def _apply_filters(hydrated: list[dict], settings_row: DiscoverySettings) -> lis
             h["engagement_below_floor"] = True
 
         out.append(h)
+
+    if dropped_private or dropped_zero or dropped_ceiling or dropped_floor:
+        logger.info(
+            "filters: dropped private=%d dead=%d above_ceiling=%d below_floor=%d (kept %d)",
+            dropped_private, dropped_zero, dropped_ceiling, dropped_floor, len(out),
+        )
     return out
 
 
@@ -588,6 +739,8 @@ async def _upsert_candidates(
         row.like_to_comment_ratio = h.get("like_to_comment_ratio")
         row.ad_density = h.get("ad_density")
         row.is_outlier_flagged = bool(h.get("is_outlier_flagged", False))
+        if h.get("data_source"):
+            row.data_source = h["data_source"]
         # Seed geo from enrichment so we have *something* even if the scorer
         # doesn't override (e.g. heuristic fallback path).
         if h.get("country_guess"):

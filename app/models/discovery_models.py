@@ -79,23 +79,22 @@ class DiscoverySettings(Base):
     program: Mapped[str] = mapped_column(String(32), default="club_stanley", index=True)
 
     # ICP — free-form description fed to the LLM scorer.
-    # Mirrors the Club Stanley sourcing guide: emerging social-media coaches,
-    # 10k-100k followers, NORAM / EMEA preferred, talking-head content, 3x+/week
-    # cadence, tapped-in audience, brand-ready but not over-saturated.
+    # Mirrors the Club Stanley sourcing guide: emerging Creators producing
+    # authentic Stanley content, 50k-500k followers, NORAM / EMEA preferred,
+    # talking-head content, 2-3x+/week cadence, tapped-in audience.
     icp_description: Mapped[str] = mapped_column(
         Text,
         default=(
-            "Club Stanley target Creators: EMERGING social-media coaches on "
-            "Instagram (people who teach content strategy, IG growth, UGC, "
-            "creator-economy tactics, monetization, hooks/storytelling, etc.). "
-            "Sweet spot 10k-100k followers; sub-10k OK only as an outlier when "
-            "the audience is unusually tapped-in. Prefer talking-head / "
-            "voiceover content with a clear POV over generic 'growth reels' "
-            "(b-roll + text overlay). Want consistent posting (3x+/week), "
-            "real comment conversation (questions, 'I tried this', Creator "
-            "replies), and a bio that clearly states niche + who they help + "
-            "proof points. Geo preference: NORAM and UK-adjacent EMEA. Avoid "
-            "ad-saturated profiles."
+            "Club Stanley sources EMERGING-tier Creators (50k-500k followers, "
+            "NORAM / EMEA preferred) for the 8-12 week paid cohort program. "
+            "Target archetypes: content-strategy / personal-brand / "
+            "Creator-economy Creators with a clear POV, strong taste, "
+            "comfort on camera, consistent 2-3x+/week cadence, and "
+            "audiences that engage with process content. The cohort pays "
+            "$300/post + bonuses; we want Creators who'll authentically "
+            "showcase their workflow with Stanley (an AI content "
+            "thought-partner) on screen. Cohort 1 anchor: Elly Walton "
+            "(44k → 124k followers; 18.4M views on a single Reel)."
         ),
     )
 
@@ -108,8 +107,8 @@ class DiscoverySettings(Base):
     #   - 10k-100k is the sweet spot.
     #   - Sub-10k allowed when "exceptional potential" — handled via
     #     allow_sub_floor_outliers below rather than hard-dropping.
-    follower_min: Mapped[int] = mapped_column(Integer, default=10_000)
-    follower_max: Mapped[int] = mapped_column(Integer, default=100_000)
+    follower_min: Mapped[int] = mapped_column(Integer, default=50_000)
+    follower_max: Mapped[int] = mapped_column(Integer, default=500_000)
     min_engagement_rate: Mapped[float] = mapped_column(Float, default=0.02)  # 2%
     allow_sub_floor_outliers: Mapped[bool] = mapped_column(Boolean, default=True)
 
@@ -204,6 +203,12 @@ class CreatorCandidate(Base):
     # Sourcing trail.
     discovered_via: Mapped[str] = mapped_column(SAEnum(CandidateSource))
     discovery_seed: Mapped[str | None] = mapped_column(String(255))  # e.g. the hashtag or brand handle
+
+    # How we got the profile snapshot — set by the hydrator. Values:
+    #   "ig_verified:web_profile_info" — pulled from IG's public JSON API
+    #   "ig_verified:og_meta"          — pulled from the public profile HTML
+    #   None                           — pre-verifier rows or (legacy) LLM-only
+    data_source: Mapped[str | None] = mapped_column(String(64))
 
     # Scoring axes — mapped onto the Club Stanley rubric:
     #   score_fit        → niche fit (social-media coaching alignment)

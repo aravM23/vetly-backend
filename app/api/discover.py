@@ -83,6 +83,7 @@ class CandidateResponse(BaseModel):
 
     discovered_via: str
     discovery_seed: str | None
+    data_source: str | None = None  # "ig_verified:web_profile_info" / "ig_verified:og_meta"
     score_fit: int | None
     score_engagement: int | None
     score_audience: int | None

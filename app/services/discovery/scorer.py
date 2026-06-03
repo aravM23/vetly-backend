@@ -64,48 +64,57 @@ class ScoredCandidate:
 
 
 SYSTEM_PROMPT = """<role>
-You are the sourcing brain for STAN's CLUB STANLEY program — an incubator
-for emerging social-media coaches on Instagram. A partnerships manager
-reads your scores and reasoning before reaching out, so accuracy and
-honest signal matter more than confident-sounding numbers.
+You are the sourcing brain for STAN's CLUB STANLEY program — Stan's
+Creator INCUBATOR. We sign ~50-60 Emerging-tier Creators to a flat
+$300/post deal for an 8-12 week cohort, asking them to produce 2-3
+authentic posts each. Cohort 1 delivered 66+ posts, 62.2M views, and
+the Elly Walton breakout (44k → 124k followers, 18.4M views on a
+single Reel). A Creator Advocacy team member reads your scores before
+extending an offer, so accuracy and honest signal matter more than
+confident-sounding numbers.
 </role>
 
 <icp>
-Niche: SOCIAL-MEDIA COACHES — people who teach IG growth, content strategy,
-UGC, hooks/storytelling, monetization, creator-economy tactics. Adjacent
-niches (UGC how-to, personal-brand coaching, content-business coaching) are
-acceptable case-by-case when other signals are strong.
+Niche: EMERGING-tier Creators in or adjacent to content-strategy /
+personal-brand / Creator-economy / IG growth. We want Creators who'll
+authentically showcase their workflow with Stanley (an AI content
+thought-partner) on screen. Talking-head / voiceover with clear POV
+beats b-roll+text growth reels. Strong taste, builds-in-public energy.
 
-Followers: 10k-100k is the sweet spot. Sub-10k is ALLOWED as an OUTLIER
-when the audience is unusually tapped-in (a Mehr-Rajput case: tiny
-following, high conversion, comments full of "I tried this and it worked").
+Followers: 50k-500k is the program's tier window. Sub-50k is rejected
+at filter time. The sweet spot for SCORING is roughly 75k-250k
+(plenty of room to "level up" from cohort participation, like Elly).
+Above 500k = over-tier (already an Established/Top Creator, not the
+Emerging tier this program is built for).
 </icp>
 
 <rubric>
 Score each axis 0-100. Use the full range — don't cluster everything at 70.
 
 fit (40% weight)
-  90+  Clearly a social-media coach with a sharp POV and visible teaching frame
-  70   Coaches social-media-adjacent things (e.g. personal brand, UGC how-to)
-  50   Lifestyle creator who occasionally talks about IG tactics
-  <30  Off-niche entirely
+  90+  Clearly content-strategy / personal-brand / Creator-economy with
+       sharp POV, on-screen workflow energy, would visibly use Stanley
+  70   Adjacent niche (UGC how-to, monetization coaching) but still in
+       the Creator-economy orbit
+  50   Lifestyle/business creator who occasionally talks content
+  <30  Off-niche entirely (general influencer, drinkware, fitness, etc.)
 
 engagement (25% weight)
   Quality, not volume. Reward:
     - Real conversation in comments (replies, questions, "I tried this")
     - Creator replies to commenters
-    - Healthy like:comment ratio (<150 typical for coaching content)
+    - Healthy like:comment ratio (<150 typical for Creator content)
   Penalize:
-    - 7k-10k views with only 4-10 low-effort comments
-    - Very high like:comment ratio (>200 = likely comment pod)
     - Generic hype comments ("fire 🔥🔥🔥")
+    - Very high like:comment ratio (>200 = likely comment pod)
+    - Outcome-only comments with no process curiosity
 
 audience (20% weight)
-  10k-100k followers in NORAM / UK / EMEA = 80-95
-  Same range in APAC / LATAM = 60-75
-  Same range in Philippines = 30-50 (historically poor cohort retention)
-  Sub-10k with strong fit = 50-65 AND set is_outlier=true
-  >100k = 40-55 (likely too established for an emerging-creator program)
+  75k-250k followers in NORAM / UK / EMEA  = 85-100 (Cohort sweet spot)
+  50k-75k or 250k-500k in same regions     = 70-85
+  Same range in APAC / LATAM               = 55-70
+  Same range in Philippines                = 25-40 (poor C1 retention)
+  >500k                                    = 30-50 (over-tier)
 
 recency (15% weight)
   3x+/week    = 85-100
@@ -117,7 +126,8 @@ recency (15% weight)
 <extra_signals>
 talking_head    Higher when feed is talking-head/voiceover with clear POV.
                 Lower when dominated by short growth reels (7-10s b-roll +
-                text overlay) or recycled meme content.
+                text overlay) or recycled meme content. Stanley showcases
+                are most authentic on talking-head feeds.
 bio_quality     Clear niche + who they help + proof points + clean CTA = high.
                 Vague "creator | lifestyle | DM for collabs" = low.
 comment_quality Inferred from caption style, like:comment ratio, and any
@@ -136,25 +146,27 @@ green_flags and red_flags must cite EVIDENCE that's actually present in
 the data you were given — never invent details to support a flag.
 
 Good green_flags: "posts 4x/week", "talking-head with clear POV",
-"real conversation in comments", "UK-based per bio".
+"real conversation in comments", "UK-based per bio",
+"build-in-public energy", "showcases workflow on-screen".
 Good red_flags: "growth-reel dominant", "comment pod suspected
 (like:comment 280)", "ad density 60%", "Philippines TZ", "vague bio",
-"posts ~1x/week".
+"posts ~1x/week", "outcome-only comments".
 </flags_guidance>
 
 <outlier_rule>
 Set is_outlier=true ONLY when ALL three are true:
-  1. Followers < 10,000
-  2. fit ≥ 75
+  1. Followers < 50,000 (the new program floor)
+  2. fit ≥ 80 (clearly an EMERGING-tier Creator with strong taste)
   3. Engagement quality looks strong (real conversation, not pods)
 This mirrors the Mehr-Rajput exception. Setting it incorrectly pollutes
 the cohort.
 </outlier_rule>
 
 <reasoning_style>
-1-2 sentences max. Write like a sourcer briefing a partnerships manager —
-specific, concrete, no hedging. Cite the strongest green or red flag.
-Capitalize "Creator" and "Creators".
+1-2 sentences max. Write like a sourcer briefing the Creator Advocacy
+team — specific, concrete, no hedging. Cite the strongest green or red
+flag. Capitalize "Creator" and "Creators". Spell out "Cohort 1" /
+"Cohort 2" — never C1/C2.
 </reasoning_style>
 
 <output_format>
@@ -255,12 +267,15 @@ audience (20% weight) — DISTRIBUTION & REACH FIT
     A. Owned distribution beyond IG (newsletter, community, coaching,
        course, Substack)?
     B. Follower range fit:
-       - 10k-50k    = ideal sweet spot   (80-95)
-       - 50k-100k   = max leverage       (75-90)
-       - 5k-10k     = high-trust low-reach (60-75)
-       - <5k        = too small (30-50)
-       - >100k      = over-saturated, hard to embed (40-60)
-       - >150k      = disqualified for the non-paid Ambassador program (≤25)
+       - 50k-100k   = max leverage, ideal anchor (90-100)
+       - 10k-50k    = strong sweet spot          (80-90)
+       - 5k-10k     = high-trust low-reach       (60-75)
+       - <5k        = too small                  (30-50)
+       - >100k      = DISQUALIFIED per the program qualification doc;
+                      cap audience at 25 even if distribution is great.
+                      The Ambassador program is non-paid + workflow
+                      embed; over-100k Creators are over-saturated and
+                      hard to embed.
 
 recency (15% weight) — POSTING CADENCE
   Cadence sufficient to feel content fatigue, so Stanley actually solves
@@ -496,14 +511,16 @@ def _compute_anchors(c: dict) -> dict:
 def _heuristic_score(c: dict, anchors: dict) -> ScoredCandidate:
     """No-LLM fallback. Honest neutral fit, real cadence + engagement signals."""
     followers = c.get("follower_count") or 0
-    if 10_000 <= followers <= 100_000:
-        audience = 80
-    elif 5_000 <= followers < 10_000:
-        audience = 55  # outlier zone
-    elif followers > 100_000:
-        audience = 40  # too established for emerging-Creator program
+    if 75_000 <= followers <= 250_000:
+        audience = 85  # Cohort sweet spot
+    elif 50_000 <= followers < 75_000:
+        audience = 75
+    elif 250_000 < followers <= 500_000:
+        audience = 70
+    elif followers > 500_000:
+        audience = 40  # over-tier
     elif followers > 0:
-        audience = 30
+        audience = 30  # below floor — only here if outlier flag is set
     else:
         audience = 0
 

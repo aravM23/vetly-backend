@@ -31,6 +31,7 @@ _ADDITIVE_COLUMNS: list[tuple[str, str, str]] = [
     # (table, column, DDL fragment)
     ("creator_candidates", "is_shortlisted", "BOOLEAN DEFAULT 0 NOT NULL"),
     ("creator_candidates", "shortlisted_at", "DATETIME"),
+    ("creator_candidates", "data_source", "VARCHAR(64)"),
     ("discovery_settings", "program", "VARCHAR(32) DEFAULT 'club_stanley' NOT NULL"),
 ]
 
