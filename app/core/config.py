@@ -10,6 +10,12 @@ class Settings(BaseSettings):
     instagram_session_id: str = ""
     firebase_credentials_path: str = ""
 
+    # Apify token for the Instagram profile-scraper fallback. When IG
+    # rate-limits the public web_profile_info endpoint (which it always
+    # does from Railway's cloud IPs), the verifier falls back to Apify's
+    # `apify/instagram-profile-scraper` actor for residential-IP lookups.
+    apify_token: str = ""
+
     polling_interval_minutes: int = 30
     velocity_spike_threshold: float = 2.5
     alert_cooldown_hours: int = 6

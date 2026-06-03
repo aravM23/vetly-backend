@@ -5,21 +5,28 @@ The LLM brainstorm hallucinates handles + follower counts. Before any
 candidate makes it into the dashboard, we verify the handle exists on
 Instagram and pull REAL follower / bio / post-count numbers.
 
-Two paths, in order of preference:
+Three paths, in order of preference:
 
   1. ``i.instagram.com/api/v1/users/web_profile_info`` with the public
      ``x-ig-app-id`` header. Returns clean JSON for any public profile.
-     This is what the IG website itself calls. No auth required, but
-     rate-limited per IP.
+     This is what the IG website itself calls. No auth required, free,
+     but rate-limited per IP — Railway's cloud IPs get 429'd hard.
 
   2. HTML fallback: ``instagram.com/<handle>/`` and parse the
      ``<meta property="og:description">`` line, which always contains
      "X Followers, Y Following, Z Posts - …" for public profiles. Used
-     when the API path 429s us.
+     when the API path 429s us. Same IP gets rate-limited though.
 
-If both fail with a definitive 404, the handle is hallucinated → drop.
-If both fail transiently (rate-limit, network), we return ``None`` and
-let the caller decide whether to trust the LLM's claim or drop.
+  3. Apify fallback: when ``APIFY_TOKEN`` is set, batch every still-
+     unresolved handle into a single ``apify/instagram-profile-scraper``
+     run. Apify uses residential IPs so they don't hit IG's cloud-IP
+     rate limits. ~$0.45 per 1K profile lookups. This is what saves
+     the Railway deploy.
+
+If everything fails with a definitive 404, the handle is hallucinated
+→ drop. If everything fails transiently (rate-limit, network, Apify
+not configured), we return ``None`` and the runner drops the candidate
+to be safe.
 """
 from __future__ import annotations
 
@@ -30,6 +37,8 @@ import re
 from dataclasses import dataclass
 
 import httpx
+
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -259,10 +268,20 @@ async def verify_many(
 ) -> dict[str, IgProfile | None]:
     """Verify a batch of handles. Returns ``{handle: IgProfile|None}``.
 
-    Capped concurrency to be polite to Instagram. Each ``None`` value
-    means the handle either doesn't exist or every endpoint blocked us.
-    Bounded per-call timeout (~6s + 1 retry) keeps worst-case batch time
-    in the tens of seconds even when IG is throttling us.
+    Two-pass strategy:
+
+      Pass 1: try every handle through the free public IG endpoints
+              (concurrency-capped). Fast for handles IG actually serves
+              us; gets 429'd from cloud IPs.
+
+      Pass 2: every handle that came back ``None`` is batched into a
+              SINGLE Apify actor run (residential IPs, won't 429). This
+              gives us ~30s end-to-end for the worst case where IG
+              blocks 100% of requests, instead of N×retries.
+
+    If ``APIFY_TOKEN`` isn't configured, we skip pass 2 and return what
+    we got from pass 1. ``None`` values mean either a real 404 or a
+    transient block we couldn't recover from.
     """
     if not handles:
         return {}
@@ -281,4 +300,123 @@ async def verify_many(
 
         await asyncio.gather(*(_one(h) for h in handles))
 
+    # Apify fallback for the handles IG blocked us on.
+    unresolved = [h for h, p in results.items() if p is None]
+    if unresolved and settings.apify_token:
+        logger.info(
+            "verify_many: %d handles unresolved by public IG endpoints, "
+            "falling back to Apify (token configured)",
+            len(unresolved),
+        )
+        apify_results = await _verify_via_apify(unresolved)
+        for h, prof in apify_results.items():
+            if prof is not None:
+                results[h] = prof
+        logger.info(
+            "verify_many: Apify returned %d/%d profiles",
+            sum(1 for p in apify_results.values() if p),
+            len(unresolved),
+        )
+    elif unresolved and not settings.apify_token:
+        logger.warning(
+            "verify_many: %d handles unresolved and APIFY_TOKEN not set — "
+            "they will be dropped. Configure APIFY_TOKEN to recover from "
+            "Instagram rate-limiting on cloud IPs.",
+            len(unresolved),
+        )
+
     return results
+
+
+# ─── Apify fallback ────────────────────────────────────────────────────────
+
+# Apify's official profile-scraper actor. Returns one record per handle
+# with followers, bio, post count, privacy, verified status, etc. Uses
+# residential IPs so it doesn't hit Instagram's cloud-IP rate limits.
+_APIFY_ACTOR = "apify~instagram-profile-scraper"
+_APIFY_RUN_SYNC_URL = (
+    f"https://api.apify.com/v2/acts/{_APIFY_ACTOR}/run-sync-get-dataset-items"
+)
+
+
+async def _verify_via_apify(handles: list[str]) -> dict[str, IgProfile | None]:
+    """Batch-verify handles via Apify. Returns ``{handle: IgProfile|None}``.
+
+    One synchronous actor run for the entire batch; Apify charges per
+    profile, not per call, so batching minimizes latency without
+    affecting cost. ~$0.45 per 1K profiles.
+
+    On any failure (auth, timeout, malformed response) we log loudly and
+    return all-None so the runner drops the affected candidates rather
+    than surfacing fabricated data.
+    """
+    token = settings.apify_token
+    if not token:
+        return {h: None for h in handles}
+
+    out: dict[str, IgProfile | None] = {h: None for h in handles}
+    if not handles:
+        return out
+
+    payload = {"usernames": handles}
+
+    # The Apify actor takes 5-30s for a batch of ~30 handles. Give it
+    # plenty of read budget but cap connect quickly.
+    timeout = httpx.Timeout(60.0, connect=6.0, read=60.0)
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            r = await client.post(
+                _APIFY_RUN_SYNC_URL,
+                params={"token": token},
+                json=payload,
+                headers={"Content-Type": "application/json"},
+            )
+        if r.status_code != 200:
+            logger.warning(
+                "Apify verify failed: status=%d body=%r",
+                r.status_code, (r.text or "")[:400],
+            )
+            return out
+        data = r.json()
+    except (httpx.RequestError, asyncio.TimeoutError, ValueError) as e:
+        logger.warning("Apify verify network error: %s", e)
+        return out
+
+    if not isinstance(data, list):
+        logger.warning("Apify verify: unexpected response shape: %r", type(data))
+        return out
+
+    for entry in data:
+        if not isinstance(entry, dict):
+            continue
+        # Apify actor returns an `error` key when a username doesn't exist
+        # (the equivalent of a 404 on the public endpoint).
+        if entry.get("error"):
+            uname = (entry.get("username") or "").lower()
+            if uname in out:
+                # Definitive 404 — leave as None so runner drops it.
+                out[uname] = None
+            continue
+        username = (entry.get("username") or "").lower()
+        if not username or username not in out:
+            continue
+        followers = _safe_int(entry.get("followersCount")) or 0
+        out[username] = IgProfile(
+            handle=username,
+            display_name=entry.get("fullName") or None,
+            biography=entry.get("biography") or None,
+            follower_count=followers,
+            following_count=_safe_int(entry.get("followsCount")),
+            post_count=_safe_int(entry.get("postsCount")),
+            is_private=bool(entry.get("private")),
+            is_verified=bool(entry.get("verified")),
+            profile_pic_url=(
+                entry.get("profilePicUrlHD")
+                or entry.get("profilePicUrl")
+                or None
+            ),
+            external_url=entry.get("externalUrl") or None,
+            source="apify",
+        )
+
+    return out
